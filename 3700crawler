@@ -95,9 +95,10 @@ class Crawler:
 
     # build get request including cookies and keep-alive connection
     def build_get_request(self, url):
-        return ("GET {} HTTP/1.0\r\n"
+        return ("GET {} HTTP/1.1\r\n"
+                "Host: {}\r\n"
                 "Connection: keep-alive\r\n"
-                "Cookie: {}\r\n\r\n").format(url, self.cookies)
+                "Cookie: {}\r\n\r\n").format(url, self.server, self.cookies)
   
         
     def get_cookies(self, header_dict):
@@ -144,12 +145,13 @@ class Crawler:
         # build request body first so we can get length of it
         request_body = "username={}&password={}&csrfmiddlewaretoken={}".format(self.username, self.password, login_html_parser.token)
         # build post request for logging in
-        request = ("POST {} HTTP/1.0\r\n"
+        request = ("POST {} HTTP/1.1\r\n"
+                   "Host: {}\r\n"
                    "Connection: keep-alive\r\n"
                    "Content-Type: application/x-www-form-urlencoded\r\n"
                    "Content-Length: {}\r\n"
                    "Cookie: {}\r\n\r\n"
-                   "{}\r\n\r\n").format("/accounts/login/?next=/fakebook/", len(request_body), self.cookies, request_body)
+                   "{}\r\n\r\n").format("/accounts/login/?next=/fakebook/", self.server, len(request_body), self.cookies, request_body)
 
         # make login request
         header_dict, html = self.handle_request_and_return_response(request)
@@ -166,6 +168,9 @@ class Crawler:
             request = self.build_get_request(link)
             header_dict, html = self.handle_request_and_return_response(request)
 
+            if "Transfer-Encoding" in header_dict:
+                print(header_dict["Transfer-Encoding"])
+                print(html)
             # Bad url, continue
             if header_dict["Code"] in ["403 Forbidden", "404 Not Found"]:
                 continue
