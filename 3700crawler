@@ -4,6 +4,7 @@ import argparse
 import json
 import socket, ssl
 from html.parser import HTMLParser
+from time import sleep
 from urllib.parse import urlparse
 
 DEFAULT_SERVER = "project5.3700.network"
@@ -19,6 +20,25 @@ class LoginHTMLParser(HTMLParser):
     def get_token(self):
         return self.token
 
+class LinkAndFlagHTMLParser(HTMLParser):
+    def __init__(self):
+        HTMLParser.__init__(self)
+        self.links = []
+        self.flags = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "a":
+            for name, value in attrs:
+                if name == "href" and value != "/" and "logout" not in value:
+                    self.links.append(value)
+
+    def handle_data(self, data):
+        if "FLAG:" in data:
+            self.flags.append(data.split(" ")[-1])
+            print(len(self.flags))
+
+    def reset_links_array(self):
+        self.links.clear()
 
 class Crawler:
     def __init__(self, args):
@@ -27,6 +47,8 @@ class Crawler:
         self.username = args.username
         self.password = args.password
         self.socket = self.get_initialized_socket()
+        self.queue, self.seen = [], []
+        self.cookies = ""
 
     def get_initialized_socket(self):
         mysocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -36,29 +58,17 @@ class Crawler:
         mysocket.connect((self.server, self.port))
         return mysocket
 
-    def get_decoded_request_response(self, request):
-        print("Request to %s:%d" % (self.server, self.port))
-        print(request)
+    def make_request_and_decode_response(self, request):
+        #print("Request to %s:%d" % (self.server, self.port))
+        #print(request)
 
         self.socket.send(request.encode('ascii'))
 
         data = self.socket.recv(10000)
-        print(data)
         decoded_data = data.decode('ascii')
-        print("Response:\n%s" % decoded_data)
+        #if 'secret_flag' in decoded_data:
+        #print("Response:\n%s" % decoded_data)
         return decoded_data
-
-
-
-    # returns [header, html], where html is a empty string if there is none present
-    def get_split_request_response(self, url):
-        split_response = self.get_decoded_request_response(url).split("\r\n\r\n", 1)
-        # make sure the array is always of size 2 (to make it easier to work with)
-        if len(split_response) == 1:
-            split_response.append('')
-
-        return split_response
-
 
     def parse_header_into_dict(self, header):
         header = header.splitlines()
@@ -74,46 +84,108 @@ class Crawler:
                 header_d[name] = value
         return header_d
 
-    def run(self):
-        request = ("GET {} HTTP/1.0\r\n"
-                   "Connection: keep-alive\r\n\r\n").format("/accounts/login/")
-        header, html = self.get_split_request_response(request)
-        header_dict = self.parse_header_into_dict(header)
-        cookie = header_dict["Set-Cookie"].split(";")[0]
+    # returns [header_dict, html], where html is a empty string if there is none present
+    def get_split_request_response(self, url):
+        split_response = self.make_request_and_decode_response(url).split("\r\n\r\n", 1)
+        # make sure the array is always of size 2 (to make it easier to work with)
+        if len(split_response) == 1:
+            split_response.append('')
+
+        return self.parse_header_into_dict(split_response[0]), split_response[1]
+
+    # build get request including cookies and keep-alive connection
+    def build_get_request(self, url):
+        return ("GET {} HTTP/1.0\r\n"
+                "Connection: keep-alive\r\n"
+                "Cookie: {}\r\n\r\n").format(url, self.cookies)
+  
+        
+    def get_cookies(self, header_dict):
+        if isinstance(header_dict["Set-Cookie"], str):
+            return header_dict["Set-Cookie"].split(";")[0]
+        else:
+            cookie = ""
+            for item in header_dict["Set-Cookie"]:
+                if len(cookie) == 0:
+                    cookie += item.split(";")[0]
+                else:
+                    cookie += "; " + item.split(";")[0]
+            return cookie
+
+    # make request, split response and turn header into dict, handle cookies
+    # and also handle 302 and 500 error
+    def handle_request_and_return_response(self, request):
+        header_dict, html = self.get_split_request_response(request)
+        if "Set-Cookie" in header_dict:
+            self.cookies = self.get_cookies(header_dict)
+        
+        if header_dict["Connection"] == "close":
+            self.socket = self.get_initialized_socket()
+            self.login()
+
+        if header_dict["Code"] == "302 Found":
+            return self.handle_request_and_return_response(self.build_get_request(header_dict["Location"]))
+        elif header_dict["Code"] == "500 Internal Server Error":
+            return self.handle_request_and_return_response(request)
+
+        return header_dict, html
+        
+
+    # Login to fakebook
+    def login(self):
+        # Make initial get request so we can get CSRF cookie
+        initial_request = self.build_get_request("/accounts/login/?next=/fakebook/")
+        header_dict, html = self.handle_request_and_return_response(initial_request)
+
+        # Parse the login form so we can get csrf middleware token
         login_html_parser = LoginHTMLParser()
         login_html_parser.feed(html)
+
+        # build request body first so we can get length of it
         request_body = "username={}&password={}&csrfmiddlewaretoken={}".format(self.username, self.password, login_html_parser.token)
+        # build post request for logging in
         request = ("POST {} HTTP/1.0\r\n"
                    "Connection: keep-alive\r\n"
                    "Content-Type: application/x-www-form-urlencoded\r\n"
                    "Content-Length: {}\r\n"
                    "Cookie: {}\r\n\r\n"
-                   "{}\r\n\r\n").format("/accounts/login/", len(request_body), cookie, request_body)
-        header, html = self.get_split_request_response(request)
-        header_dict = self.parse_header_into_dict(header)
-        
-        cookie = ""
-        for item in header_dict["Set-Cookie"]:
-            if len(cookie) == 0:
-                cookie += item.split(";")[0]
-            else:
-                cookie += "; " + item.split(";")[0]
+                   "{}\r\n\r\n").format("/accounts/login/?next=/fakebook/", len(request_body), self.cookies, request_body)
 
-        request = ("GET {} HTTP/1.0\r\n"
-                   "Connection: keep-alive\r\n"
-                   "Cookie: {}\r\n\r\n").format("/fakebook/", cookie)
-        header, html = self.get_split_request_response(request)
+        # make login request
+        header_dict, html = self.handle_request_and_return_response(request)
 
 
+    def crawl(self):
+        parser = LinkAndFlagHTMLParser()
+        while (len(parser.flags) < 5):
+            link = self.queue.pop(0)
+            if link in self.seen:
+                continue
+
+            self.seen.append(link)
+            request = self.build_get_request(link)
+            header_dict, html = self.handle_request_and_return_response(request)
+
+            # Bad url, continue
+            if header_dict["Code"] in ["403 Forbidden", "404 Not Found"]:
+                continue
+
+            parser.feed(html)
+            # for new_link in parser.links:
+            #     if new_link not in self.queue:
+            #         self.queue.append(new_link)
+            self.queue.extend(parser.links)
+            parser.reset_links_array()
+
+    
+        print(parser.flags)
 
 
-        # if header_dict['Connection'] == "close":
-        #     self.socket = self.get_initialized_socket()
 
-        # print(header_dict)
-        # if header_dict['Code'] == "302 Found":
-        #     header, html = self.get_split_request_response(header_dict["Location"])
-        #     header_dict = self.parse_header_into_dict(header)
+    def run(self):
+        self.login()
+        self.queue = ["/fakebook/"]
+        self.crawl()
         
 
 if __name__ == "__main__":
