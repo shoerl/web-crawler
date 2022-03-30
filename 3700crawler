@@ -35,7 +35,7 @@ class LinkAndFlagHTMLParser(HTMLParser):
     def handle_data(self, data):
         if "FLAG:" in data:
             self.flags.append(data.split(" ")[-1])
-            print(len(self.flags))
+            #print(self.flags[-1])
 
     def reset_links_array(self):
         self.links.clear()
@@ -59,15 +59,15 @@ class Crawler:
         return mysocket
 
     def make_request_and_decode_response(self, request):
-        #print("Request to %s:%d" % (self.server, self.port))
-        #print(request)
+        print("Request to %s:%d" % (self.server, self.port))
+        print(request)
 
         self.socket.send(request.encode('ascii'))
 
         data = self.socket.recv(10000)
         decoded_data = data.decode('ascii')
         #if 'secret_flag' in decoded_data:
-        #print("Response:\n%s" % decoded_data)
+        print("Response:\n%s" % decoded_data)
         return decoded_data
 
     def parse_header_into_dict(self, header):
@@ -183,7 +183,7 @@ class Crawler:
             parser.reset_links_array()
 
     
-        print(parser.flags)
+        #print(parser.flags)
 
 
 
