@@ -4,7 +4,6 @@ import argparse
 import json
 import socket, ssl
 from html.parser import HTMLParser
-from time import sleep
 from urllib.parse import urlparse
 
 DEFAULT_SERVER = "project5.3700.network"
@@ -35,7 +34,7 @@ class LinkAndFlagHTMLParser(HTMLParser):
     def handle_data(self, data):
         if "FLAG:" in data:
             self.flags.append(data.split(" ")[-1])
-            #print(self.flags[-1])
+            print(self.flags[-1])
 
     def reset_links_array(self):
         self.links.clear()
@@ -59,27 +58,31 @@ class Crawler:
         return mysocket
 
     def make_request_and_decode_response(self, request):
-        print("Request to %s:%d" % (self.server, self.port))
-        print(request)
+        #print("Request to %s:%d" % (self.server, self.port))
+        #print(request)
 
         self.socket.send(request.encode('ascii'))
 
         data = self.socket.recv(10000)
         decoded_data = data.decode('ascii')
-        #if 'secret_flag' in decoded_data:
-        print("Response:\n%s" % decoded_data)
+        # if 'secret_flag' in decoded_data:
+        #     print("Request to %s:%d" % (self.server, self.port))
+        #     print(request)
+        #     print("Response:\n%s" % decoded_data)
+
+        #print("Response:\n%s" % decoded_data)
+
         return decoded_data
 
     def parse_header_into_dict(self, header):
         header = header.splitlines()
         header_d = {}
         header_d['Type'], header_d['Code'] = header[0].split(maxsplit=1)
+        header_d['Set-Cookie'] = []
         for line in header[1:]:
             name, value = line.split(': ')
-            if name in header_d and isinstance(header_d[name], list):
+            if name == 'Set-Cookie':
                 header_d[name].append(value)
-            elif name in header_d:
-                header_d[name] = [header_d[name], value]
             else:
                 header_d[name] = value
         return header_d
@@ -102,22 +105,19 @@ class Crawler:
   
         
     def get_cookies(self, header_dict):
-        if isinstance(header_dict["Set-Cookie"], str):
-            return header_dict["Set-Cookie"].split(";")[0]
-        else:
-            cookie = ""
-            for item in header_dict["Set-Cookie"]:
-                if len(cookie) == 0:
-                    cookie += item.split(";")[0]
-                else:
-                    cookie += "; " + item.split(";")[0]
-            return cookie
+        cookie = ""
+        for item in header_dict["Set-Cookie"]:
+            if len(cookie) == 0:
+                cookie += item.split(";")[0]
+            else:
+                cookie += "; " + item.split(";")[0]
+        return cookie
 
     # make request, split response and turn header into dict, handle cookies
     # and also handle 302 and 500 error
     def handle_request_and_return_response(self, request):
         header_dict, html = self.get_split_request_response(request)
-        if "Set-Cookie" in header_dict:
+        if len(header_dict["Set-Cookie"]) > 0:
             self.cookies = self.get_cookies(header_dict)
         
         if header_dict["Connection"] == "close":
@@ -131,6 +131,8 @@ class Crawler:
 
         return header_dict, html
         
+    def is_forbidden_or_not_found(self, header_dict):
+        return header_dict["Code"] in ["403 Forbidden", "404 Not Found"]
 
     # Login to fakebook
     def login(self):
@@ -161,8 +163,6 @@ class Crawler:
         parser = LinkAndFlagHTMLParser()
         while (len(parser.flags) < 5):
             link = self.queue.pop(0)
-            if link in self.seen:
-                continue
 
             self.seen.append(link)
             request = self.build_get_request(link)
@@ -171,16 +171,20 @@ class Crawler:
             if "Transfer-Encoding" in header_dict:
                 print(header_dict["Transfer-Encoding"])
                 print(html)
+
             # Bad url, continue
-            if header_dict["Code"] in ["403 Forbidden", "404 Not Found"]:
+            if self.is_forbidden_or_not_found(header_dict):
                 continue
 
             parser.feed(html)
-            # for new_link in parser.links:
-            #     if new_link not in self.queue:
-            #         self.queue.append(new_link)
-            self.queue.extend(parser.links)
+            for new_link in parser.links:
+                on_specified_server = urlparse(new_link).netloc == ''
+                not_in_queue_or_seen = new_link not in self.queue and new_link not in self.seen
+                if not_in_queue_or_seen and on_specified_server:
+                    self.queue.append(new_link)
+
             parser.reset_links_array()
+            
 
     
         #print(parser.flags)
