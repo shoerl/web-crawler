@@ -50,6 +50,11 @@ class Crawler:
         self.cookies = ""
 
     def get_initialized_socket(self):
+        """
+        Initialize socket, wrap it in TLS, connect said socket to specified server and port, and return it
+        Returns:
+            socket - instance of Socket class
+        """
         mysocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # Wrap socket in TLS so we can use HTTPS
         context = ssl.SSLContext()
@@ -58,27 +63,37 @@ class Crawler:
         return mysocket
 
     def make_request_and_decode_response(self, request):
-        #print("Request to %s:%d" % (self.server, self.port))
-        #print(request)
-
+        """
+        Make request using given request string and return decoded response
+        Args:
+            request - str representation of the request
+        Returns:
+            str - representing decoded response that came from request
+        """
         self.socket.send(request.encode('ascii'))
 
         data = self.socket.recv(10000)
         decoded_data = data.decode('ascii')
-        # if 'secret_flag' in decoded_data:
-        #     print("Request to %s:%d" % (self.server, self.port))
-        #     print(request)
-        #     print("Response:\n%s" % decoded_data)
-
-        #print("Response:\n%s" % decoded_data)
 
         return decoded_data
 
     def parse_header_into_dict(self, header):
-        header = header.splitlines()
+        """
+        Parse header into dictionary, where Type and Code are always included
+        Args:
+            header - str representation of the header
+        Returns:
+            dictionary - containing all parsable name/value pairs within header
+        """
         header_d = {}
+
+        # Initialize array for Set-Cookie if Set-Cookie is present in header
+        if 'Set-Cookie' in header:
+            header_d['Set-Cookie'] = []
+
+        header = header.splitlines()
         header_d['Type'], header_d['Code'] = header[0].split(maxsplit=1)
-        header_d['Set-Cookie'] = []
+
         for line in header[1:]:
             name, value = line.split(': ')
             if name == 'Set-Cookie':
@@ -87,17 +102,29 @@ class Crawler:
                 header_d[name] = value
         return header_d
 
-    # returns [header_dict, html], where html is a empty string if there is none present
-    def get_split_request_response(self, url):
-        split_response = self.make_request_and_decode_response(url).split("\r\n\r\n", 1)
+    def make_request_and_get_split_response(self, request):
+        """
+        Make request using given request string and return split response
+        Args:
+            request - str representation of request to be made
+        Returns:
+            tuple of header str and html str of response (Note html is empty string if none present)
+        """
+        split_response = self.make_request_and_decode_response(request).split("\r\n\r\n", 1)
         # make sure the array is always of size 2 (to make it easier to work with)
         if len(split_response) == 1:
             split_response.append('')
 
-        return self.parse_header_into_dict(split_response[0]), split_response[1]
+        return split_response[0], split_response[1]
 
-    # build get request including cookies and keep-alive connection
     def build_get_request(self, url):
+        """
+        Build get request which includes cookies and keep-alive connection using given url
+        Args:
+            url - str representation of url
+        Returns:
+            str - representing full GET request
+        """
         return ("GET {} HTTP/1.1\r\n"
                 "Host: {}\r\n"
                 "Connection: keep-alive\r\n"
@@ -113,16 +140,49 @@ class Crawler:
                 cookie += "; " + item.split(";")[0]
         return cookie
 
-    # make request, split response and turn header into dict, handle cookies
-    # and also handle 302 and 500 error
+    def parse_chunked_response(self, html):
+        """
+        Parse chunked html response and return unchunked html
+        Args:
+            html - str representation of chunked html
+        Returns:
+            str - representing unchunked html
+        """
+        unchunked_html = ""
+        chunked_html_split = html.split("\r\n")
+        curr_idx = 0
+        curr_len = int(chunked_html_split[curr_idx], 16)
+        while (curr_len != 0):
+            unchunked_html += chunked_html_split[curr_idx + 1][0:curr_len]
+            curr_idx += 2
+            curr_len = int(chunked_html_split[curr_idx], 16)
+
+        return unchunked_html
+
     def handle_request_and_return_response(self, request):
-        header_dict, html = self.get_split_request_response(request)
-        if len(header_dict["Set-Cookie"]) > 0:
+        """
+        Make request, process response, process cookies, and handle various scenarios before returning response
+        These scenarios include:
+            reinitializing connection if response indicates that connection will be closed
+            converting chunked response into unchunked if necessary
+            handling 302 and 500 response codes
+        Args:
+            request - str representation of request to be made
+        Returns:
+            tuple of header dictionary and html string of response
+        """
+        header, html = self.make_request_and_get_split_response(request)
+        header_dict = self.parse_header_into_dict(header)
+        
+        if "Set-Cookie" in header_dict:
             self.cookies = self.get_cookies(header_dict)
         
         if header_dict["Connection"] == "close":
             self.socket = self.get_initialized_socket()
             self.login()
+
+        if "Transfer-Encoding" in header_dict and header_dict["Transfer-Encoding"] == 'chunked':
+            html = self.parse_chunked_response(html)
 
         if header_dict["Code"] == "302 Found":
             return self.handle_request_and_return_response(self.build_get_request(header_dict["Location"]))
@@ -168,10 +228,6 @@ class Crawler:
             request = self.build_get_request(link)
             header_dict, html = self.handle_request_and_return_response(request)
 
-            if "Transfer-Encoding" in header_dict:
-                print(header_dict["Transfer-Encoding"])
-                print(html)
-
             # Bad url, continue
             if self.is_forbidden_or_not_found(header_dict):
                 continue
@@ -185,11 +241,6 @@ class Crawler:
 
             parser.reset_links_array()
             
-
-    
-        #print(parser.flags)
-
-
 
     def run(self):
         self.login()
