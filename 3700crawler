@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import json
 import socket, ssl
 from html.parser import HTMLParser
 from urllib.parse import urlparse
@@ -194,8 +193,11 @@ class Crawler:
     def is_forbidden_or_not_found(self, header_dict):
         return header_dict["Code"] in ["403 Forbidden", "404 Not Found"]
 
-    # Login to fakebook
     def login(self):
+        """
+        Login to fakebook
+        Note: raises RuntimeError if there is an issue logging in
+        """
         # Make initial get request so we can get CSRF cookie
         initial_request = self.build_get_request("/accounts/login/?next=/fakebook/")
         header_dict, html = self.handle_request_and_return_response(initial_request)
