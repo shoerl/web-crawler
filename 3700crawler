@@ -218,6 +218,8 @@ class Crawler:
         # make login request
         header_dict, html = self.handle_request_and_return_response(request)
 
+        if header_dict["Code"] != "200 OK" or "Set-Cookie" not in header_dict or "sessionid" not in header_dict["Set-Cookie"][0]:
+            raise RuntimeError("There was an issue logging in!")
 
     def crawl(self):
         parser = LinkAndFlagHTMLParser()
