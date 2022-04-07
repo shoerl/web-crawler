@@ -9,36 +9,65 @@ DEFAULT_SERVER = "project5.3700.network"
 DEFAULT_PORT = 443
 
 class LoginHTMLParser(HTMLParser):
+    """
+    Class for the handler to parse Login HTML.
+    """
+    def __init__(self):
+        HTMLParser.__init__(self)
+        self.token = None
+
     def handle_starttag(self, tag, attrs):
+        """
+        Sets the parser's token to the value in the input. 
+        """
         if tag == "input" and ('name', 'csrfmiddlewaretoken') in attrs:
             for attr in attrs:
                 if attr[0] == 'value':
                     self.token = attr[1]
     
     def get_token(self):
+        """
+        Gets the parser's token.
+        """
         return self.token
 
 class LinkAndFlagHTMLParser(HTMLParser):
+    """
+    Class for the handler to parse the Link and Flag HTML.
+    """
     def __init__(self):
         HTMLParser.__init__(self)
         self.links = []
         self.flags = []
 
     def handle_starttag(self, tag, attrs):
-        if tag == "a":
+        """
+        Gathers the link values in the given tag.
+        """
+        if tag == "a": # a is the html link tag
             for name, value in attrs:
+                # if value is a link, not including logout
                 if name == "href" and value != "/" and "logout" not in value:
                     self.links.append(value)
 
     def handle_data(self, data):
+        """
+        Gathers the flags in the given data, and prints each one out as it is found.
+        """
         if "FLAG:" in data:
             self.flags.append(data.split(" ")[-1])
             print(self.flags[-1])
 
     def reset_links_array(self):
+        """
+        Clears the parser's gathered links.
+        """
         self.links.clear()
 
 class Crawler:
+    """
+    Class representing the Web Crawler.
+    """
     def __init__(self, args):
         self.server = args.server
         self.port = args.port
@@ -91,8 +120,10 @@ class Crawler:
             header_d['Set-Cookie'] = []
 
         header = header.splitlines()
+        # extract Type and Code from header
         header_d['Type'], header_d['Code'] = header[0].split(maxsplit=1)
 
+        # extract cookies from header
         for line in header[1:]:
             name, value = line.split(': ')
             if name == 'Set-Cookie':
@@ -124,6 +155,8 @@ class Crawler:
         Returns:
             str - representing full GET request
         """
+        # our get request is default keep-alive connection type
+        # and custom url, server, and cookies
         return ("GET {} HTTP/1.1\r\n"
                 "Host: {}\r\n"
                 "Connection: keep-alive\r\n"
@@ -131,10 +164,17 @@ class Crawler:
   
         
     def get_cookies(self, header_dict):
+        """
+        Gets cookies from the given header dict.
+        Args:
+            header_dict - dict of header with Set-Cookie as a key
+        Returns:
+            string list of cookies delimited by ;
+        """
         cookie = ""
         for item in header_dict["Set-Cookie"]:
             if len(cookie) == 0:
-                cookie += item.split(";")[0]
+                cookie += item.split(";")[0] # don't put a ; before the first cookie
             else:
                 cookie += "; " + item.split(";")[0]
         return cookie
@@ -151,6 +191,7 @@ class Crawler:
         chunked_html_split = html.split("\r\n")
         curr_idx = 0
         curr_len = int(chunked_html_split[curr_idx], 16)
+        # aggregate chunked html into unchunked html string 
         while (curr_len != 0):
             unchunked_html += chunked_html_split[curr_idx + 1][0:curr_len]
             curr_idx += 2
@@ -174,23 +215,35 @@ class Crawler:
         header_dict = self.parse_header_into_dict(header)
         
         if "Set-Cookie" in header_dict:
+            # collect the cookies in the header
             self.cookies = self.get_cookies(header_dict)
         
         if header_dict["Connection"] == "close":
+            # login to the connection
             self.socket = self.get_initialized_socket()
             self.login()
 
         if "Transfer-Encoding" in header_dict and header_dict["Transfer-Encoding"] == 'chunked':
+            # unchunk the html
             html = self.parse_chunked_response(html)
 
         if header_dict["Code"] == "302 Found":
+            # try new request using header's location
             return self.handle_request_and_return_response(self.build_get_request(header_dict["Location"]))
         elif header_dict["Code"] == "500 Internal Server Error":
+            # retry request 
             return self.handle_request_and_return_response(request)
 
         return header_dict, html
         
     def is_forbidden_or_not_found(self, header_dict):
+        """
+        Determines if the given header has a forbidden or not found code.
+        Args:
+            header_dict - dict representation of header
+        Returns:
+            boolean is forbidden or not found?
+        """
         return header_dict["Code"] in ["403 Forbidden", "404 Not Found"]
 
     def login(self):
@@ -224,6 +277,9 @@ class Crawler:
             raise RuntimeError("There was an issue logging in!")
 
     def crawl(self):
+        """
+        Crawls the queue.
+        """
         parser = LinkAndFlagHTMLParser()
         while (len(parser.flags) < 5):
             link = self.queue.pop(0)
@@ -241,13 +297,18 @@ class Crawler:
                 on_specified_server = urlparse(new_link).netloc == ''
                 not_in_queue_or_seen = new_link not in self.queue and new_link not in self.seen
                 if not_in_queue_or_seen and on_specified_server:
+                    # only crawl through this link if it is unseen, unqueued, and on this server
                     self.queue.append(new_link)
 
             parser.reset_links_array()
             
 
     def run(self):
+        """
+        Entrypoint to the web crawler.
+        """
         self.login()
+        # initialize queue to start with fakebook's site
         self.queue = ["/fakebook/"]
         self.crawl()
         
