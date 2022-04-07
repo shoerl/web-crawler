@@ -18,18 +18,12 @@ class LoginHTMLParser(HTMLParser):
 
     def handle_starttag(self, tag, attrs):
         """
-        Sets the parser's token to the value in the input. 
+        Sets the parser's token to the csrfmiddlewaretoken value in a input tag. 
         """
         if tag == "input" and ('name', 'csrfmiddlewaretoken') in attrs:
             for attr in attrs:
                 if attr[0] == 'value':
                     self.token = attr[1]
-    
-    def get_token(self):
-        """
-        Gets the parser's token.
-        """
-        return self.token
 
 class LinkAndFlagHTMLParser(HTMLParser):
     """
