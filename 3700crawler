@@ -46,7 +46,7 @@ class LinkAndFlagHTMLParser(HTMLParser):
         """
         if tag == "a": # a is the html link tag
             for name, value in attrs:
-                # if value is a link, not including logout
+                # if value is a link, ignoring logout and homepage redirect
                 if name == "href" and value != "/" and "logout" not in value:
                     self.links.append(value)
 
@@ -273,7 +273,9 @@ class Crawler:
         # make login request
         header_dict, html = self.handle_request_and_return_response(request)
 
-        if header_dict["Code"] != "200 OK" or "Set-Cookie" not in header_dict or "sessionid" not in header_dict["Set-Cookie"][0]:
+        # if code returned from login request isn't ok or sessionid isnt in cookies, there must have been
+        # issue logging in, so raise runtime error
+        if header_dict["Code"] != "200 OK" or "sessionid" not in self.cookies:
             raise RuntimeError("There was an issue logging in!")
 
     def crawl(self):
@@ -282,9 +284,12 @@ class Crawler:
         """
         parser = LinkAndFlagHTMLParser()
         while (len(parser.flags) < 5):
+            # pop link off queue
             link = self.queue.pop(0)
 
+            # append link to seen list
             self.seen.append(link)
+            # build get request and submit it
             request = self.build_get_request(link)
             header_dict, html = self.handle_request_and_return_response(request)
 
@@ -292,6 +297,7 @@ class Crawler:
             if self.is_forbidden_or_not_found(header_dict):
                 continue
 
+            # parse html for flags and additional links
             parser.feed(html)
             for new_link in parser.links:
                 on_specified_server = urlparse(new_link).netloc == ''
@@ -300,6 +306,7 @@ class Crawler:
                     # only crawl through this link if it is unseen, unqueued, and on this server
                     self.queue.append(new_link)
 
+            # reset links array in parser so we can continue to use same instance of parser
             parser.reset_links_array()
             
 
